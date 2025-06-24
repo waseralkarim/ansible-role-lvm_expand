@@ -1,0 +1,7 @@
+---
+vg_name: vg_data
+lv_name: lv_data
+lv_path: "/dev/{{ vg_name }}/{{ lv_name }}"
+mount_point: /mnt
+devices_to_add: ["/dev/sdb"]
+

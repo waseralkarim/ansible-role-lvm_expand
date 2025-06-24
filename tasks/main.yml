@@ -1,0 +1,77 @@
+---
+- name: Check if LV is already mounted
+  shell: "mount | grep -w '{{ mount_point }}'"
+  register: mount_check
+  ignore_errors: true
+
+- name: Skip play if already mounted
+  meta: end_play
+  when: mount_check.rc == 0
+
+- name: Ensure LVM tools are installed
+  apt:
+    name: lvm2
+    state: present
+    update_cache: true
+
+- name: Check if device is already a physical volume
+  shell: "pvs --noheadings -o pv_name | grep -w '{{ item }}1'"
+  loop: "{{ devices_to_add }}"
+  register: pv_check
+  ignore_errors: true
+
+- name: Set list of new devices not yet added to LVM
+  set_fact:
+    new_devices: "{{ new_devices | default([]) + [item.item] }}"
+  when: item.rc != 0
+  loop: "{{ pv_check.results }}"
+
+- name: Stop if there are no new devices to add
+  meta: end_play
+  when: new_devices | default([]) | length == 0
+
+- name: Create partition on new devices
+  community.general.parted:
+    device: "{{ item }}"
+    number: 1
+    state: present
+    part_type: primary
+    fs_type: ext4
+  loop: "{{ new_devices }}"
+
+- name: Create physical volume on new partitions
+  command: pvcreate "{{ item }}1"
+  loop: "{{ new_devices }}"
+
+- name: Extend volume group
+  community.general.lvg:
+    vg: "{{ vg_name }}"
+    pvs: "{{ new_devices | map('regex_replace', '$', '1') | list }}"
+
+- name: Extend logical volume
+  community.general.lvol:
+    vg: "{{ vg_name }}"
+    lv: "{{ lv_name }}"
+    size: 100%FREE
+    resizefs: true
+
+- name: Create mount point if not exists
+  file:
+    path: "{{ mount_point }}"
+    state: directory
+
+- name: Mount logical volume to /mnt
+  mount:
+    path: "{{ mount_point }}"
+    src: "{{ lv_path }}"
+    fstype: ext4
+    state: mounted
+
+- name: Ensure /mnt is mounted at boot
+  mount:
+    path: "{{ mount_point }}"
+    src: "{{ lv_path }}"
+    fstype: ext4
+    opts: defaults
+    state: present
+
